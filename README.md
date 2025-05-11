@@ -1,6 +1,6 @@
 # ✨ Limitless to git
 
-Export your [Limitless](https://limitless.ai) lifelogs to JSON files organized by date using GitHub Actions. This tool helps you maintain a local backup of your lifelogs and makes it easy to version control your data using git.
+Export your [Limitless](https://limitless.ai) lifelogs to markdown files organized by date using GitHub Actions. This tool helps you maintain a local backup of your lifelogs and makes it easy to version control your data using git.
 
 ## Installation
 
@@ -44,20 +44,24 @@ The script will:
 
 1. Create a `data` directory if it doesn't exist
 2. Fetch your lifelogs from the Limitless API
-3. Save them in JSON files organized by date (YYYY-MM-DD.json)
+3. Save them in markdown files organized by date (YYYY-MM-DD.md)
 4. Show progress as it exports the data
 
 ## Output structure
 
 ```
 data/
-  2024-01-01.json
-  2024-01-02.json
-  2024-01-03.json
+  2024-01-01.md
+  2024-01-02.md
+  2024-01-03.md
   ...
 ```
 
-Each JSON file contains an array of lifelogs for that specific day, with all the details including markdown content and headings.
+Each markdown file contains the day's conversations and content, formatted with:
+
+- Headings for different sections
+- Speaker names and timestamps for each message
+- Proper markdown formatting for easy reading
 
 ## Features
 

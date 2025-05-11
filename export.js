@@ -72,11 +72,48 @@ async function processLifelogs(lifelogs, dataDir) {
     lifelogsByDate[date].push(lifelog);
   }
 
-  // Save each day's lifelogs immediately
+  // Save each day's lifelogs as markdown
   for (const [date, logs] of Object.entries(lifelogsByDate)) {
-    const filePath = path.join(dataDir, `${date}.json`);
-    await ensureDirectoryExists(path.dirname(filePath));
-    await appendToFile(filePath, logs);
+    const markdownFilePath = path.join(dataDir, `${date}.md`);
+    await ensureDirectoryExists(path.dirname(markdownFilePath));
+    await createMarkdownFile(markdownFilePath, logs);
+  }
+}
+
+async function createMarkdownFile(filePath, lifelogs) {
+  try {
+    // Combine all content into a single markdown string
+    const markdownContent = lifelogs
+      .map((lifelog) => {
+        if (!lifelog.contents || !Array.isArray(lifelog.contents)) return "";
+
+        return lifelog.contents
+          .map((item) => {
+            switch (item.type) {
+              case "heading1":
+                return `# ${item.content}\n`;
+              case "heading2":
+                return `## ${item.content}\n`;
+              case "heading3":
+                return `### ${item.content}\n`;
+              case "blockquote":
+                const speaker = item.speakerName || "Unknown";
+                const time = new Date(item.startTime).toLocaleTimeString();
+                return `> **${speaker}** (${time}): ${item.content}\n`;
+              default:
+                return `${item.content}\n`;
+            }
+          })
+          .join("\n");
+      })
+      .filter((content) => content.trim())
+      .join("\n\n");
+
+    // Write to file
+    await fs.writeFile(filePath, markdownContent);
+    console.log(`Created markdown file: ${filePath}`);
+  } catch (error) {
+    console.error(`Error creating markdown file ${filePath}:`, error.message);
   }
 }
 
