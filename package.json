@@ -1,0 +1,13 @@
+{
+  "name": "limitless-export",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Export Limitless lifelogs to JSON files",
+  "main": "export.js",
+  "scripts": {
+    "start": "node export.js"
+  },
+  "dependencies": {
+    "axios": "^1.9.0"
+  }
+}
