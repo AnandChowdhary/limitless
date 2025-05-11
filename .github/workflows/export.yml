@@ -7,6 +7,7 @@ on:
 
 jobs:
   export:
+    if: github.repository != 'AnandChowdhary/limitless'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
