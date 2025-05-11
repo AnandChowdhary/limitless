@@ -1,31 +1,37 @@
 # ✨ Limitless to git
 
-Export your [Limitless](https://limitless.ai) lifelogs to JSON files organized by date. This tool helps you maintain a local backup of your lifelogs and makes it easy to version control your data using git.
+Export your [Limitless](https://limitless.ai) lifelogs to JSON files organized by date using GitHub Actions. This tool helps you maintain a local backup of your lifelogs and makes it easy to version control your data using git.
 
 ## Installation
 
-1. Clone this repository:
+1. Fork this repository and add your Limitless API key as a secret:
+
+   - Go to your fork's Settings > Secrets and variables > Actions
+   - Create a new repository secret named `LIMITLESS_API_KEY`
+   - Add your Limitless API key as the value
+
+2. Clone your fork:
 
 ```bash
 git clone https://github.com/yourusername/limitless.git
 cd limitless
 ```
 
-2. Install dependencies:
+3. Install dependencies:
 
 ```bash
 npm install
 ```
 
-3. Set your Limitless API key:
-
-```bash
-export LIMITLESS_API_KEY="your-api-key-here"
-```
-
 ## Usage
 
-Run the export script:
+### Automated Export (Recommended)
+
+The repository includes a GitHub Action that automatically exports your lifelogs every day at midnight UTC. No additional setup is required - just make sure you've added your `LIMITLESS_API_KEY` secret as described in the installation steps.
+
+### Manual Export
+
+You can also run the export script locally:
 
 ```bash
 npm start
@@ -52,6 +58,7 @@ Each JSON file contains an array of lifelogs for that specific day, with all the
 
 ## Features
 
+- **Automated daily exports**: GitHub Actions automatically exports your lifelogs every day at midnight UTC
 - **Incremental updates**: The script can be run multiple times safely. It will update existing files rather than overwriting them.
 - **Deduplication**: Automatically removes duplicate entries based on lifelog ID.
 - **Chronological order**: Maintains chronological order of entries within each file.
