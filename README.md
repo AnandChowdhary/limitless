@@ -4,13 +4,16 @@ Export your [Limitless](https://limitless.ai) lifelogs to JSON files organized b
 
 ## Installation
 
-1. Fork this repository and add your Limitless API key as a secret:
+1. Create a new repository using this template:
 
-   - Go to your fork's Settings > Secrets and variables > Actions
-   - Create a new repository secret named `LIMITLESS_API_KEY`
-   - Add your Limitless API key as the value
+   - Click the "Use this template" button at the top of this repository
+   - Name your new repository
+   - Add your Limitless API key as a secret:
+     - Go to your new repository's Settings > Secrets and variables > Actions
+     - Create a new repository secret named `LIMITLESS_API_KEY`
+     - Add your Limitless API key as the value
 
-2. Clone your fork:
+2. Clone your new repository:
 
 ```bash
 git clone https://github.com/yourusername/limitless.git
