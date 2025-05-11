@@ -28,11 +28,18 @@ jobs:
         run: npm start
 
       - name: Configure Git
+        if: always()
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
 
       - name: Commit and push if changed
+        if: always()
         run: |
           git add data/
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update lifelogs [skip ci]" && git push)
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update lifelogs [skip ci]"
+            git push
+          fi
