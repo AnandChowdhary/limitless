@@ -3,9 +3,32 @@
 import axios from "axios";
 import fs from "fs/promises";
 import path from "path";
+import { z } from "zod";
 
 const MAX_RETRIES = 3;
 const TIMEOUT = 30000; // 30 seconds
+const RATE_LIMIT_DELAY = 12000; // 12 seconds between requests to stay under 5 requests/minute
+const BATCH_SIZE = 10;
+
+// Zod schemas for API response validation
+const LifelogContentSchema = z.object({
+  type: z.enum(["heading1", "heading2", "heading3", "blockquote", "text"]),
+  content: z.string(),
+  startTime: z.string().optional(),
+  speakerName: z.string().optional(),
+});
+
+const LifelogSchema = z.object({
+  id: z.string(),
+  startTime: z.string(),
+  endTime: z.string(),
+  contents: z.array(LifelogContentSchema).optional(),
+});
+
+const LifelogsResponseSchema = z.object({
+  data: z.object({ lifelogs: z.array(LifelogSchema) }),
+  meta: z.object({ lifelogs: z.object({ nextCursor: z.string().nullable() }) }),
+});
 
 // Ensure the API key is provided
 const apiKey = process.env.LIMITLESS_API_KEY;
@@ -26,33 +49,18 @@ async function ensureDirectoryExists(dirPath) {
   }
 }
 
-async function appendToFile(filePath, newLifelogs) {
+async function saveSyncState(state) {
+  const statePath = path.join(process.cwd(), "data", ".sync-state.json");
+  await fs.writeFile(statePath, JSON.stringify(state, null, 2));
+}
+
+async function loadSyncState() {
   try {
-    // Read existing data if file exists
-    let existingData = [];
-    try {
-      const content = await fs.readFile(filePath, "utf-8");
-      existingData = JSON.parse(content);
-    } catch (error) {
-      // File doesn't exist or is invalid JSON, start fresh
-    }
-
-    // Merge new data with existing data
-    const mergedData = [...existingData, ...newLifelogs];
-
-    // Sort by startTime to maintain chronological order
-    mergedData.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-
-    // Remove duplicates based on id
-    const uniqueData = Array.from(
-      new Map(mergedData.map((item) => [item.id, item])).values()
-    );
-
-    // Write back to file
-    await fs.writeFile(filePath, JSON.stringify(uniqueData, null, 2));
-    console.log(`Updated ${filePath} with ${newLifelogs.length} new lifelogs`);
-  } catch (error) {
-    console.error(`Error updating ${filePath}:`, error.message);
+    const statePath = path.join(process.cwd(), "data", ".sync-state.json");
+    const content = await fs.readFile(statePath, "utf-8");
+    return JSON.parse(content);
+  } catch {
+    return { lastCursor: null, lastSyncTime: null, failedAttempts: [] };
   }
 }
 
@@ -114,6 +122,48 @@ async function createMarkdownFile(filePath, lifelogs) {
     console.log(`Created markdown file: ${filePath}`);
   } catch (error) {
     console.error(`Error creating markdown file ${filePath}:`, error.message);
+    throw error; // Propagate error for better error handling
+  }
+}
+
+async function fetchLifelogs(apiUrl, params, retryCount = 0) {
+  try {
+    const response = await axios.get(`${apiUrl}/v1/lifelogs`, {
+      headers: { "X-API-Key": apiKey },
+      params,
+      timeout: TIMEOUT,
+    });
+
+    // Validate response structure with Zod
+    try {
+      const validatedData = LifelogsResponseSchema.parse(response.data);
+      return validatedData;
+    } catch (validationError) {
+      console.error("API Response validation failed:", validationError);
+      console.error(
+        "Invalid response:",
+        JSON.stringify(response.data, null, 2)
+      );
+      throw new Error("Invalid API response structure");
+    }
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      if (error.response?.status === 429) {
+        // Rate limit hit, wait longer
+        console.log("Rate limit hit, waiting 60 seconds...");
+        await sleep(60000);
+        return fetchLifelogs(apiUrl, params, retryCount);
+      }
+
+      if (retryCount < MAX_RETRIES) {
+        console.log(
+          `Request failed, retrying (${retryCount + 1}/${MAX_RETRIES})...`
+        );
+        await sleep(1000 * Math.pow(2, retryCount)); // Exponential backoff
+        return fetchLifelogs(apiUrl, params, retryCount + 1);
+      }
+    }
+    throw error;
   }
 }
 
@@ -124,13 +174,55 @@ async function exportLifelogs() {
     await ensureDirectoryExists(dataDir);
 
     const apiUrl = process.env.LIMITLESS_API_URL || "https://api.limitless.ai";
-    const endpoint = "v1/lifelogs";
-    const batchSize = 10;
-    let cursor;
+    let syncState = await loadSyncState();
+    let safeDateStr = null;
+
+    // First, check if we're up to date with a descending request
+    const checkParams = {
+      limit: "1",
+      includeMarkdown: "true",
+      includeHeadings: "true",
+      direction: "desc",
+    };
+
+    const latestData = await fetchLifelogs(apiUrl, checkParams);
+    if (!latestData?.data?.lifelogs?.[0]) {
+      console.log("No lifelogs found in the system");
+      return;
+    }
+
+    const latestLifelog = latestData.data.lifelogs[0];
+    const latestDate = new Date(latestLifelog.startTime)
+      .toISOString()
+      .split("T")[0];
+    // Get the previous day as a safe point
+    const safeDate = new Date(latestLifelog.startTime);
+    safeDate.setDate(safeDate.getDate() - 1);
+    safeDateStr = safeDate.toISOString().split("T")[0];
+    console.log(
+      `Latest lifelog is from ${latestDate}, using ${safeDateStr} as safe sync point`
+    );
+
+    // If we have a last sync time, check if we need to sync
+    if (syncState.lastSyncTime) {
+      const lastSyncDate = new Date(syncState.lastSyncTime)
+        .toISOString()
+        .split("T")[0];
+      if (lastSyncDate >= safeDateStr) {
+        console.log(
+          `Already synced up to ${lastSyncDate}, which is after our safe point ${safeDateStr}`
+        );
+        return;
+      }
+    }
+
+    // Now proceed with ascending sync
+    let cursor = syncState.lastCursor;
+    let totalProcessed = 0;
 
     while (true) {
       const params = {
-        limit: batchSize.toString(),
+        limit: BATCH_SIZE.toString(),
         includeMarkdown: "true",
         includeHeadings: "true",
         direction: "asc",
@@ -140,52 +232,73 @@ async function exportLifelogs() {
         params.cursor = cursor;
       }
 
-      let retries = 0;
-      while (retries < MAX_RETRIES) {
-        try {
-          const response = await axios.get(`${apiUrl}/${endpoint}`, {
-            headers: { "X-API-Key": apiKey },
-            params,
-            timeout: TIMEOUT,
-          });
+      try {
+        const response = await fetchLifelogs(apiUrl, params);
+        const lifelogs = response.data.lifelogs;
 
-          const lifelogs = response.data.data.lifelogs;
-          console.log(`Fetched ${lifelogs.length} lifelogs`);
-
-          // Process and save this batch immediately
-          await processLifelogs(lifelogs, dataDir);
-
-          // Get the next cursor from the response
-          const nextCursor = response.data.meta.lifelogs.nextCursor;
-
-          // If there's no next cursor or we got fewer results than requested, we're done
-          if (!nextCursor || lifelogs.length < batchSize) {
-            console.log("Export completed successfully!");
-            return;
-          }
-
-          console.log(`Next cursor: ${nextCursor}`);
-          cursor = nextCursor;
-          break; // Success, exit retry loop
-        } catch (error) {
-          retries++;
-          if (retries === MAX_RETRIES) {
-            if (axios.isAxiosError(error)) {
-              throw new Error(
-                `HTTP error! Status: ${error.response?.status} after ${MAX_RETRIES} retries`
-              );
-            }
-            throw error;
-          }
-          console.log(
-            `Request failed, retrying (${retries}/${MAX_RETRIES})...`
-          );
-          await sleep(1000 * retries); // Exponential backoff
+        if (!lifelogs || lifelogs.length === 0) {
+          console.log("No more lifelogs to process");
+          break;
         }
+
+        // Check if we've reached the safe date
+        const lastLifelogDate = new Date(
+          lifelogs[lifelogs.length - 1].startTime
+        )
+          .toISOString()
+          .split("T")[0];
+        if (lastLifelogDate >= safeDateStr) {
+          console.log(`Reached safe sync point ${safeDateStr}, stopping sync`);
+          break;
+        }
+
+        console.log(`Fetched ${lifelogs.length} lifelogs`);
+        await processLifelogs(lifelogs, dataDir);
+
+        totalProcessed += lifelogs.length;
+        cursor = response.data.meta?.lifelogs?.nextCursor;
+
+        // Update sync state
+        syncState.lastCursor = cursor;
+        syncState.lastSyncTime = new Date().toISOString();
+        await saveSyncState(syncState);
+
+        // Polite delay between requests
+        await sleep(RATE_LIMIT_DELAY);
+
+        if (!cursor || lifelogs.length < BATCH_SIZE) {
+          console.log("Export completed successfully!");
+          break;
+        }
+      } catch (error) {
+        console.error("Error during export:", error.message);
+        if (error.response) {
+          console.error(
+            "API Response:",
+            JSON.stringify(error.response.data, null, 2)
+          );
+        }
+        // Save failed attempt
+        syncState.failedAttempts.push({
+          timestamp: new Date().toISOString(),
+          cursor,
+          error: error.message,
+          response: error.response?.data,
+        });
+        await saveSyncState(syncState);
+        throw error;
       }
     }
+
+    console.log(`Total lifelogs processed: ${totalProcessed}`);
   } catch (error) {
     console.error("Error exporting lifelogs:", error.message);
+    if (error.response) {
+      console.error(
+        "API Response:",
+        JSON.stringify(error.response.data, null, 2)
+      );
+    }
     process.exit(1);
   }
 }
